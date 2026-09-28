@@ -66,3 +66,23 @@ via `card3d_utils.py`:
 
 It picks up the SVG generated on the Photo → SVG page automatically (via
 `st.session_state`), or you can upload any other `.svg` file directly.
+
+### QR Code Stand page
+
+The **QR Code Stand** page (`pages/2_🪧_QR_Code_Stand.py`) turns a link (a
+shop, Instagram, etc.) into two 3D-printable parts, via `qr_stand_utils.py`:
+
+1. A flat plate with the QR code embossed (or engraved) on it, built the
+   same "background + raised/engraved artwork" way as the 3D Wedding
+   Invite page, but from its own QR-specific mesh builder rather than
+   `card3d_utils.build_invite_mesh`: a QR code's dense, rectilinear data
+   area can produce a merged polygon with its own interior holes that
+   crashes the `triangle` triangulation library underneath that pipeline
+   (fine for curved letterform artwork, not for a QR grid), so the plate
+   is decomposed row by row into simple, hole-free rectangles instead.
+2. A base block with a slot cut into its top at an angle (cut in 2D with
+   shapely, then extruded, same as the plate/invite geometry), sized to
+   grip the plate's edge so it stands up leaning back on a table.
+
+Print both parts flat on the bed and slide the plate into the base's slot
+to assemble -- handy for pointing craft-fair visitors at a link.

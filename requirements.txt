@@ -6,3 +6,4 @@ shapely
 trimesh
 triangle
 plotly
+qrcode

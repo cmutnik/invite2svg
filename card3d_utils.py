@@ -407,16 +407,31 @@ def mesh_to_stl_bytes(mesh):
 
 def mesh_to_3mf_bytes(mesh, feature_mask, base_color="#f2ead6", feature_color="#6b6455"):
     """Export as a 3MF with the plate and the raised/engraved artwork as
-    two separate mesh *objects*, grouped as components of one build item,
-    each tagged with its own base-material color.
+    two separate mesh *objects*, grouped as components of one build item.
 
-    Slicers with multi-color/multi-material support (Bambu Studio, Orca,
-    PrusaSlicer) key color/filament assignment off separate objects or
-    volumes, not off a single fused mesh with per-triangle color -- they
-    generally only pick up the embedded `displaycolor` as an initial
-    hint (support varies by version), but the object split itself is
-    what makes each part selectable and colorable at all, e.g. via
-    right-click > set filament in Bambu Studio's object list.
+    Color is written for three different audiences:
+
+    - A `<basematerials>` group, referenced by `pid`/`pindex` at the
+      *object* level, and a Materials-and-Properties `<m:colorgroup>`
+      referenced by `pid`/`p1` on every *triangle* -- the two standard 3MF
+      ways of tagging color, for any viewer that reads the spec.
+    - `Metadata/model_settings.config`, in the Bambu Studio/OrcaSlicer/
+      PrusaSlicer-family's *own* project format (not standard 3MF).
+      Verified against OrcaSlicer's own 3MF importer source
+      (`bbs_3mf.cpp`): these slicers plate every part in one flat default
+      color on import, and only assign each object/volume to a distinct
+      filament/extruder slot when this file explicitly says to -- the
+      standard `<basematerials>`/`<colorgroup>` hints above are otherwise
+      ignored for this purpose (confirmed by round-tripping this file
+      through the official 3MF Consortium reference library, `lib3mf`:
+      it reads back both colors correctly, yet Snapmaker OrcaSlicer still
+      showed one flat color without this file). This is what makes the
+      plate and artwork come in visibly distinct on the print bed without
+      a manual per-part assignment step -- though the *exact* result color
+      is still whatever filament happens to be loaded in that extruder
+      slot in the user's own printer profile, same as any multi-material
+      print; a 3MF can request "a different slot per part" but can't force
+      an arbitrary RGB onto a physical filament choice.
 
     STL has no concept of color at all, hence this separate format --
     `feature_mask` is the same per-face array `build_invite_mesh` returns.
@@ -434,9 +449,11 @@ def mesh_to_3mf_bytes(mesh, feature_mask, base_color="#f2ead6", feature_color="#
         sub.remove_unreferenced_vertices()
         return sub
 
-    def mesh_xml(m):
+    def mesh_xml(m, color_index):
         vertices_xml = "".join(f'<vertex x="{x:.6f}" y="{y:.6f}" z="{z:.6f}"/>' for x, y, z in m.vertices)
-        triangles_xml = "".join(f'<triangle v1="{t[0]}" v2="{t[1]}" v3="{t[2]}"/>' for t in m.faces)
+        triangles_xml = "".join(
+            f'<triangle v1="{t[0]}" v2="{t[1]}" v3="{t[2]}" pid="5" p1="{color_index}"/>' for t in m.faces
+        )
         return f"<mesh>\n        <vertices>{vertices_xml}</vertices>\n        <triangles>{triangles_xml}</triangles>\n      </mesh>"
 
     plate_mesh = submesh(~feature_mask)
@@ -444,14 +461,20 @@ def mesh_to_3mf_bytes(mesh, feature_mask, base_color="#f2ead6", feature_color="#
 
     model_xml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n'
+        '<model unit="millimeter" '
+        'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+        'xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">\n'
         "  <resources>\n"
         '    <basematerials id="1">\n'
         f'      <base name="Plate" displaycolor="{hex_to_srgba(base_color)}"/>\n'
         f'      <base name="Artwork" displaycolor="{hex_to_srgba(feature_color)}"/>\n'
         "    </basematerials>\n"
-        f'    <object id="2" type="model" pid="1" pindex="0">\n      {mesh_xml(plate_mesh)}\n    </object>\n'
-        f'    <object id="3" type="model" pid="1" pindex="1">\n      {mesh_xml(artwork_mesh)}\n    </object>\n'
+        '    <m:colorgroup id="5">\n'
+        f'      <m:color color="{hex_to_srgba(base_color)}"/>\n'
+        f'      <m:color color="{hex_to_srgba(feature_color)}"/>\n'
+        "    </m:colorgroup>\n"
+        f'    <object id="2" type="model" pid="1" pindex="0">\n      {mesh_xml(plate_mesh, 0)}\n    </object>\n'
+        f'    <object id="3" type="model" pid="1" pindex="1">\n      {mesh_xml(artwork_mesh, 1)}\n    </object>\n'
         '    <object id="4" type="model">\n'
         "      <components>\n"
         '        <component objectid="2"/>\n'
@@ -463,11 +486,33 @@ def mesh_to_3mf_bytes(mesh, feature_mask, base_color="#f2ead6", feature_color="#
         "</model>\n"
     )
 
+    # Bambu/Orca/PrusaSlicer-family project metadata: assigns object id 2
+    # (the plate) to extruder/filament slot 1 and object id 3 (the artwork)
+    # to slot 2, as `<part>`s of build object id 4 -- matching the ids above
+    # exactly. This is what these slicers actually key automatic per-part
+    # color off of; see the docstring.
+    model_settings_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<config>\n"
+        '  <object id="4">\n'
+        '    <part id="2" subtype="normal_part">\n'
+        '      <metadata key="name" value="Plate"/>\n'
+        '      <metadata key="extruder" value="1"/>\n'
+        "    </part>\n"
+        '    <part id="3" subtype="normal_part">\n'
+        '      <metadata key="name" value="Artwork"/>\n'
+        '      <metadata key="extruder" value="2"/>\n'
+        "    </part>\n"
+        "  </object>\n"
+        "</config>\n"
+    )
+
     content_types = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
         '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
         '  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
+        '  <Default Extension="config" ContentType="application/octet-stream"/>\n'
         "</Types>\n"
     )
     rels = (
@@ -482,5 +527,6 @@ def mesh_to_3mf_bytes(mesh, feature_mask, base_color="#f2ead6", feature_color="#
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", content_types)
         zf.writestr("_rels/.rels", rels)
+        zf.writestr("Metadata/model_settings.config", model_settings_xml)
         zf.writestr("3D/3dmodel.model", model_xml)
     return buf.getvalue()
