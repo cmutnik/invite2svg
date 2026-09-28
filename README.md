@@ -86,3 +86,21 @@ shop, Instagram, etc.) into two 3D-printable parts, via `qr_stand_utils.py`:
 
 Print both parts flat on the bed and slide the plate into the base's slot
 to assemble -- handy for pointing craft-fair visitors at a link.
+
+Optionally add branding above/below (or, for an icon alone, in the upper
+right corner of) the QR code:
+
+- **Icon** -- a curated set of brand icons (Instagram, Facebook, TikTok,
+  Etsy, Pinterest, X), sourced from the CC0-licensed
+  [Simple Icons](https://simpleicons.org) project (`icons.py`).
+- **Title / company name** -- rendered with a bundled DejaVu Sans Bold font
+  and traced with potrace (`potrace_utils.py`), the same raster-then-trace
+  approach `streamlit_app.py` uses for photographed cards.
+
+Both are extruded via their own mesh builder in `qr_stand_utils.py`
+(`build_banner_mesh`) rather than `card3d_utils.build_invite_mesh`: some
+icons (e.g. Instagram, whose camera-ring counter itself contains a
+separate, disjoint dot shape) nest two holes deep, which `build_invite_mesh`'s
+"merge touching features into one hole-carrying polygon" step turns into an
+invalid polygon for. A long title is auto-shrunk to fit the plate's width,
+so its artwork can't extend past the plate's own edge.

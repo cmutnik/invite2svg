@@ -10,10 +10,20 @@ Run with:
 (this page is auto-discovered from the sidebar)
 """
 
+import shutil
+
 import streamlit as st
 
 from card3d_utils import mesh_to_3mf_bytes, mesh_to_plotly_figure, mesh_to_stl_bytes
-from qr_stand_utils import build_qr_plate_mesh, build_stand_base_mesh, generate_qr_polygons
+from icons import ICON_PATHS
+from qr_stand_utils import (
+    build_banner_mesh,
+    build_banner_polygons,
+    build_qr_plate_mesh,
+    build_stand_base_mesh,
+    combine_plate_and_banner,
+    generate_qr_polygons,
+)
 
 st.set_page_config(page_title="QR Code Stand", page_icon="🪧", layout="wide")
 
@@ -56,6 +66,22 @@ with st.sidebar:
     base_color = st.color_picker("Plate color", "#FFFFFF")
     feature_color = st.color_picker("QR color", "#111111")
 
+    st.header("Branding (optional)")
+    icon_choice = st.selectbox("Icon", ["None"] + sorted(ICON_PATHS), index=0)
+    icon_name = None if icon_choice == "None" else icon_choice
+    title_text = st.text_input("Title / company name", "")
+    icon_size_mm = title_height_mm = None
+    banner_position_label = "Above"
+    if icon_name:
+        icon_size_mm = st.slider("Icon size (mm)", 5.0, 30.0, 12.0, step=1.0)
+    if title_text:
+        title_height_mm = st.slider("Title text height (mm)", 3.0, 20.0, 8.0, step=0.5)
+        banner_position_label = st.radio(
+            "Place above or below the QR code", ["Above", "Below"], horizontal=True,
+            help="Icon-only branding (no title) always goes in the upper-right corner instead.",
+        )
+    banner_position = "above" if banner_position_label == "Above" else "below"
+
     st.header("Stand base")
     base_depth_mm = st.slider("Base depth (mm)", 20.0, 80.0, 40.0, step=1.0)
     base_height_mm = st.slider("Base height (mm)", 10.0, 40.0, 18.0, step=1.0)
@@ -65,6 +91,9 @@ with st.sidebar:
         "Slot clearance (mm)", 0.0, 1.0, 0.3, step=0.05,
         help="Extra slot width so the printed plate slides in. Tune to your printer's tolerance.",
     )
+
+if title_text and shutil.which("potrace") is None:
+    st.error("`potrace` was not found on PATH. Install it, e.g. `brew install potrace`, to render title text.")
 
 if data:
     if st.button("Generate stand", type="primary"):
@@ -84,6 +113,22 @@ if data:
                     feature_height_mm=feature_height_mm,
                     mode=mode,
                 )
+
+                if icon_name or title_text:
+                    banner_polygons, banner_height_mm = build_banner_polygons(
+                        plate_size_mm,
+                        icon_name=icon_name,
+                        icon_size_mm=icon_size_mm or 12.0,
+                        title_text=title_text or None,
+                        title_height_mm=title_height_mm or 8.0,
+                    )
+                    banner_mesh, banner_feature_mask = build_banner_mesh(
+                        banner_polygons, plate_size_mm, banner_height_mm, plate_thickness_mm, feature_height_mm,
+                        mode=mode,
+                    )
+                    plate_mesh, feature_mask = combine_plate_and_banner(
+                        plate_mesh, feature_mask, banner_mesh, banner_feature_mask, banner_position=banner_position,
+                    )
 
                 base_mesh = build_stand_base_mesh(
                     width_mm=plate_size_mm,
@@ -110,7 +155,8 @@ if data:
 
     if "qr_stand" in st.session_state:
         result = st.session_state["qr_stand"]
-        st.success(f"Built a {result['plate_size_mm']:.0f}mm square QR plate and matching stand base.")
+        plate_w, plate_h = result["plate_mesh"].bounds[1][:2]
+        st.success(f"Built a {plate_w:.0f}x{plate_h:.0f}mm QR plate and matching stand base.")
 
         tab_plate, tab_base = st.tabs(["QR plate", "Stand base"])
         with tab_plate:

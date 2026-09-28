@@ -7,3 +7,4 @@ trimesh
 triangle
 plotly
 qrcode
+Pillow

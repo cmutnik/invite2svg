@@ -13,8 +13,6 @@ Requires the `potrace` command-line tool on PATH (e.g. `brew install potrace`).
 """
 
 import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 
 import cv2
@@ -22,30 +20,9 @@ import numpy as np
 import streamlit as st
 
 from card_utils import clean_ink_mask, deskew_card, find_shadow_trim, ink_mask, locate_card
+from potrace_utils import run_potrace
 
 st.set_page_config(page_title="Photo to SVG", page_icon="✂️", layout="wide")
-
-
-def run_potrace(bitmap, turdsize, alphamax, opttolerance):
-    """bitmap: uint8 array, 0=ink (black), 255=paper (white). Returns SVG text."""
-    with tempfile.TemporaryDirectory() as tmp:
-        bmp_path = Path(tmp) / "ink.bmp"
-        svg_path = Path(tmp) / "out.svg"
-        cv2.imwrite(str(bmp_path), bitmap)
-
-        cmd = [
-            "potrace", str(bmp_path),
-            "--svg",
-            "--group",
-            "--turdsize", str(turdsize),
-            "--alphamax", str(alphamax),
-            "--opttolerance", str(opttolerance),
-            "-o", str(svg_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"potrace failed:\n{result.stderr}")
-        return svg_path.read_text()
 
 
 def full_card_ink(img, min_area):
