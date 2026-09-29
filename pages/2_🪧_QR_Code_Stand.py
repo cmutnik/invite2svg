@@ -21,8 +21,8 @@ from qr_stand_utils import (
     build_banner_polygons,
     build_qr_plate_mesh,
     build_stand_base_mesh,
-    combine_plate_and_banner,
     generate_qr_polygons,
+    stack_plate_pieces,
 )
 
 st.set_page_config(page_title="QR Code Stand", page_icon="🪧", layout="wide")
@@ -126,8 +126,8 @@ if data:
                         banner_polygons, plate_size_mm, banner_height_mm, plate_thickness_mm, feature_height_mm,
                         mode=mode,
                     )
-                    plate_mesh, feature_mask = combine_plate_and_banner(
-                        plate_mesh, feature_mask, banner_mesh, banner_feature_mask, banner_position=banner_position,
+                    plate_mesh, feature_mask = stack_plate_pieces(
+                        plate_mesh, feature_mask, banner_mesh, banner_feature_mask, position=banner_position,
                     )
 
                 base_mesh = build_stand_base_mesh(

@@ -1,7 +1,8 @@
 # Copyright (c) 2025 takotime808
-"""QR code -> 3D stand pipeline for the QR Code Stand page.
+"""QR code -> 3D model pipeline shared by the QR Code Stand and QR Code
+Keychain pages.
 
-Two parts, printed separately and assembled by hand:
+Core piece, used by both:
 
 - A flat plate with the QR code embossed/engraved on it -- built the same
   "background top cap + base + raised/engraved pegs" way
@@ -10,10 +11,21 @@ Two parts, printed separately and assembled by hand:
   that decomposes the plate into simple, hole-free rectangles instead of
   merging touching modules -- a QR code's dense data area can otherwise
   produce a polygon that crashes the underlying `triangle` C library.
-- A base block with a slot cut into its top at an angle, sized to grip the
-  plate's edge so it stands up leaning back on a table. The slot is cut in
-  2D (shapely boolean) before extruding, the same "cut in 2D, then extrude"
-  approach `card3d_utils` uses to avoid a 3D CSG library.
+- An optional banner strip (icon and/or title text, see `build_banner_mesh`)
+  fused onto the plate above or below the QR code via `stack_plate_pieces`.
+
+Page-specific pieces, each fused onto (or, for the stand, paired
+alongside) that same plate:
+
+- QR Code Stand: a base block with a slot cut into its top at an angle,
+  sized to grip the plate's edge so it stands up leaning back on a table,
+  printed as a *separate* part and assembled by hand (see
+  `build_stand_base_mesh`). The slot is cut in 2D (shapely boolean) before
+  extruding, the same "cut in 2D, then extrude" approach `card3d_utils`
+  uses to avoid a 3D CSG library.
+- QR Code Keychain: a loop with a through-hole for a split ring, fused
+  directly onto the plate as *one* printable piece (see
+  `build_keychain_loop_mesh`).
 """
 
 import itertools
@@ -23,7 +35,7 @@ import numpy as np
 import qrcode
 import trimesh
 from shapely.affinity import rotate, scale, translate
-from shapely.geometry import MultiPolygon, Polygon, box
+from shapely.geometry import MultiPolygon, Point, Polygon, box
 from shapely.ops import unary_union
 
 from card3d_utils import _as_polygons, _combined_bounds, _drop_cap, _TRIANGLE_ARGS, _triangulate_capped, parse_svg_polygons
@@ -402,32 +414,80 @@ def build_banner_mesh(polygons, width_mm, height_mm, base_thickness_mm, feature_
     return result, feature_mask
 
 
-def combine_plate_and_banner(qr_mesh, qr_feature_mask, banner_mesh, banner_feature_mask, banner_position="above"):
-    """Stack the QR plate and the banner strip into one printable plate --
-    same width and thickness, placed edge to edge. `banner_position` is
-    "above" or "below" the QR code, matching the plate's own y-up =
-    physically-up convention once it's standing in the base (see
-    `build_stand_base_mesh`).
+def stack_plate_pieces(qr_mesh, qr_feature_mask, extra_mesh, extra_feature_mask, position="above"):
+    """Stack the QR plate and another plate-shaped piece -- a banner strip
+    (see `build_banner_mesh`) or a keychain loop (see
+    `build_keychain_loop_mesh`) -- into one printable piece: same width and
+    thickness, placed edge to edge along y. `position` is "above" or
+    "below" the QR code, matching the plate's own y-up = physically-up
+    convention once it's standing in the base (see `build_stand_base_mesh`)
+    or hanging from the loop.
     """
-    if banner_position not in ("above", "below"):
-        raise ValueError(f"Unknown banner_position: {banner_position!r}")
+    if position not in ("above", "below"):
+        raise ValueError(f"Unknown position: {position!r}")
 
     qr_height = qr_mesh.bounds[1][1]
-    banner_height = banner_mesh.bounds[1][1]
+    extra_height = extra_mesh.bounds[1][1]
     qr_mesh = qr_mesh.copy()
-    banner_mesh = banner_mesh.copy()
+    extra_mesh = extra_mesh.copy()
 
-    if banner_position == "above":
-        banner_mesh.apply_translation([0, qr_height, 0])
+    if position == "above":
+        extra_mesh.apply_translation([0, qr_height, 0])
     else:
-        qr_mesh.apply_translation([0, banner_height, 0])
+        qr_mesh.apply_translation([0, extra_height, 0])
 
-    result = trimesh.util.concatenate([qr_mesh, banner_mesh])
+    result = trimesh.util.concatenate([qr_mesh, extra_mesh])
     result.merge_vertices(digits_vertex=8)
     result.remove_unreferenced_vertices()
 
-    feature_mask = np.concatenate([qr_feature_mask, banner_feature_mask])
+    feature_mask = np.concatenate([qr_feature_mask, extra_feature_mask])
     return result, feature_mask
+
+
+def build_keychain_loop_mesh(
+    plate_width_mm,
+    base_thickness_mm,
+    loop_diameter_mm=16.0,
+    hole_diameter_mm=5.5,
+    neck_width_mm=10.0,
+    neck_height_mm=2.0,
+):
+    """Build a keychain's loop tab: a neck rising from y=0 (fused, via
+    `stack_plate_pieces`, to the top of the QR plate) into a circular loop
+    with a through-hole for a split ring, centered horizontally within
+    `plate_width_mm`. Returns (mesh, feature_mask) -- `feature_mask` is all
+    False, since the loop is plain structural material, not part of the QR
+    artwork (matches `base_color`, not `feature_color`, in a 3MF export).
+
+    A single uniform-thickness solid with one hole is simple enough to
+    extrude directly -- unlike the QR plate/banner, it doesn't need the
+    "background + separately-extruded pegs" split those use to put two
+    different heights on one shared base.
+    """
+    wall = (loop_diameter_mm - hole_diameter_mm) / 2
+    if wall < 2.5:
+        raise ValueError("Loop diameter must leave at least ~2.5mm of wall around the hole to stay sturdy.")
+
+    loop_radius = loop_diameter_mm / 2
+    hole_radius = hole_diameter_mm / 2
+    cx = plate_width_mm / 2
+    cy = neck_height_mm + loop_radius
+
+    # the neck reaches all the way to the loop's own center, guaranteeing a
+    # clean union with the circle regardless of neck_width vs loop size.
+    neck = box(cx - neck_width_mm / 2, 0, cx + neck_width_mm / 2, cy)
+    loop = Point(cx, cy).buffer(loop_radius, resolution=64)
+    outline = unary_union([neck, loop])
+    hole = Point(cx, cy).buffer(hole_radius, resolution=64)
+    footprint = outline.difference(hole)
+    if isinstance(footprint, MultiPolygon):
+        footprint = max(footprint.geoms, key=lambda p: p.area)
+
+    mesh = trimesh.creation.extrude_polygon(
+        footprint, height=base_thickness_mm, engine="triangle", triangle_args=_TRIANGLE_ARGS,
+    )
+    feature_mask = np.zeros(len(mesh.faces), dtype=bool)
+    return mesh, feature_mask
 
 
 def build_stand_base_mesh(

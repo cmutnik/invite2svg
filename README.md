@@ -104,3 +104,22 @@ separate, disjoint dot shape) nest two holes deep, which `build_invite_mesh`'s
 "merge touching features into one hole-carrying polygon" step turns into an
 invalid polygon for. A long title is auto-shrunk to fit the plate's width,
 so its artwork can't extend past the plate's own edge.
+
+### QR Code Keychain page
+
+The **QR Code Keychain** page (`pages/3_🔑_QR_Code_Keychain.py`) is the QR
+Code Stand's smaller sibling: the same embossed/engraved QR plate
+(`qr_stand_utils.build_qr_plate_mesh`), but fused directly into a loop with
+a through-hole for a split ring (`build_keychain_loop_mesh`) instead of
+paired with a separate stand base -- one single FDM-ready part, no
+assembly. The loop is a plain extruded polygon (a neck rectangle unioned
+with a circle, a keyring hole subtracted from it) rather than the
+"background + separately-extruded pegs" split the plate/banner use, since
+it's just one uniform-thickness shape with a hole, not two different
+heights sharing a base.
+
+`qr_stand_utils.stack_plate_pieces` (used for the stand page's banner too)
+fuses the plate and the loop into one mesh by translating one directly on
+top of the other along y -- the same "build separate flat slabs, then
+concatenate them edge to edge" approach the rest of this app's 3D pipeline
+uses to avoid a 3D boolean library.
