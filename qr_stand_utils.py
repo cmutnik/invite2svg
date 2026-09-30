@@ -419,9 +419,10 @@ def stack_plate_pieces(qr_mesh, qr_feature_mask, extra_mesh, extra_feature_mask,
     (see `build_banner_mesh`) or a keychain loop (see
     `build_keychain_loop_mesh`) -- into one printable piece: same width and
     thickness, placed edge to edge along y. `position` is "above" or
-    "below" the QR code, matching the plate's own y-up = physically-up
-    convention once it's standing in the base (see `build_stand_base_mesh`)
-    or hanging from the loop.
+    "below" the QR code in this plain y-up-is-up layout -- which also
+    matches how the plate ends up facing once its y=0 edge is slid into
+    the Stand page's tilted base (see `assemble_stand_preview`) and how a
+    keychain hangs from its loop: no extra flip needed in either case.
     """
     if position not in ("above", "below"):
         raise ValueError(f"Unknown position: {position!r}")
@@ -442,6 +443,52 @@ def stack_plate_pieces(qr_mesh, qr_feature_mask, extra_mesh, extra_feature_mask,
 
     feature_mask = np.concatenate([qr_feature_mask, extra_feature_mask])
     return result, feature_mask
+
+
+def assemble_stand_preview(
+    base_mesh, plate_mesh, plate_feature_mask, base_depth_mm, base_height_mm, tilt_deg, slot_depth_mm,
+    entry_depth_frac=0.35,
+):
+    """Combine `base_mesh` with a copy of `plate_mesh` (the same plain,
+    y-up plate used for the flat preview/download -- no pre-flip needed)
+    positioned and rotated into `build_stand_base_mesh`'s slot, for an
+    on-screen "how this looks once assembled" preview -- verification
+    that the two really do fit together correctly, rather than asking the
+    person to take that on faith. Both parts are still printed and
+    exported separately and flat; this combined mesh is for preview only.
+
+    `base_mesh`'s own axes, after its internal remap, are X=width,
+    Y=depth, Z=height (not X=depth, Y=width -- easy to get backwards,
+    and doing so here once before produced a plate assembled 90 degrees
+    off from the slot). Its slot swings its buried end toward the front
+    (smaller Y) so the exposed portion leans back (see that function's
+    own comment); sliding the plate's y=0 edge in there, feature
+    (raised/engraved) face leading, lands that face pointing outward with
+    the plate's own width and y-up-is-up layout intact -- confirmed by
+    checking the resulting feature normal's sign below, no mirroring
+    needed on either axis.
+    """
+    t = np.radians(tilt_deg)
+    entry_depth = base_depth_mm * entry_depth_frac
+    y_dir = np.array([0.0, np.sin(t), np.cos(t)])  # (width, depth, height)
+
+    a = np.array([1.0, 0.0, 0.0])  # local width -> physical width (X), unmirrored
+    b = y_dir                       # local y=0 -> deep tip (buried); +y -> exposed/mouth
+    c = np.cross(a, b)              # feature-normal direction
+    assert c[1] < 0, "feature face should point toward -Y (front, where the slot mouth is)"
+    R = np.column_stack([a, b, c])
+    deep_tip = np.array([
+        0.0, entry_depth - slot_depth_mm * np.sin(t), base_height_mm - slot_depth_mm * np.cos(t),
+    ])
+
+    plate_positioned = plate_mesh.copy()
+    plate_positioned.vertices = deep_tip + plate_positioned.vertices @ R.T
+
+    combined = trimesh.util.concatenate([base_mesh, plate_positioned])
+    combined_feature_mask = np.concatenate([
+        np.zeros(len(base_mesh.faces), dtype=bool), plate_feature_mask,
+    ])
+    return combined, combined_feature_mask
 
 
 def build_keychain_loop_mesh(

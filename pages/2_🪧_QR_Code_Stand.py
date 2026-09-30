@@ -17,6 +17,7 @@ import streamlit as st
 from card3d_utils import mesh_to_3mf_bytes, mesh_to_plotly_figure, mesh_to_stl_bytes
 from icons import ICON_PATHS
 from qr_stand_utils import (
+    assemble_stand_preview,
     build_banner_mesh,
     build_banner_polygons,
     build_qr_plate_mesh,
@@ -24,6 +25,13 @@ from qr_stand_utils import (
     generate_qr_polygons,
     stack_plate_pieces,
 )
+
+# Extra blank material always added, on top of `slot_depth_mm` itself, to
+# whatever ends up at the plate's y=0 edge -- the end that slides into the
+# base's slot (see `assemble_stand_preview`) -- as a print-tolerance buffer
+# so the slot can't ever reach far enough to cover the QR code or banner
+# artwork.
+_INSERTION_BUFFER_MM = 2.0
 
 st.set_page_config(page_title="QR Code Stand", page_icon="🪧", layout="wide")
 
@@ -102,6 +110,12 @@ if data:
                 polygons, active_size_mm = generate_qr_polygons(
                     data, error_correction=error_correction, module_size_mm=module_size_mm,
                 )
+                has_banner = bool(icon_name or title_text)
+                needed_gap_mm = slot_depth_mm + _INSERTION_BUFFER_MM
+
+                # margin_mm always sets the plate's own (symmetric)
+                # quiet-zone border directly -- no silent override, so the
+                # slider always has a visible effect.
                 plate_size_mm = active_size_mm + 2 * margin_mm
 
                 plate_mesh, feature_mask = build_qr_plate_mesh(
@@ -114,7 +128,7 @@ if data:
                     mode=mode,
                 )
 
-                if icon_name or title_text:
+                if has_banner:
                     banner_polygons, banner_height_mm = build_banner_polygons(
                         plate_size_mm,
                         icon_name=icon_name,
@@ -130,6 +144,27 @@ if data:
                         plate_mesh, feature_mask, banner_mesh, banner_feature_mask, position=banner_position,
                     )
 
+                # Blank insertion tab at the plate's y=0 edge -- the end
+                # that actually slides into the base's slot (see
+                # assemble_stand_preview) -- so the slot always has
+                # somewhere to grip that isn't QR modules or banner
+                # artwork, regardless of banner_position. Only pads the
+                # shortfall beyond whatever blank space (margin_mm, or a
+                # banner's own edge padding) is already there, instead of
+                # always stacking a full extra tab or silently inflating
+                # margin_mm -- keeps both the slider and the plate size
+                # honest about what they actually produce.
+                faces = plate_mesh.faces[feature_mask]
+                existing_gap_mm = plate_mesh.vertices[faces.reshape(-1), 1].min()
+                shortfall_mm = max(0.0, needed_gap_mm - existing_gap_mm)
+                if shortfall_mm > 1e-6:
+                    spacer_mesh, spacer_feature_mask = build_banner_mesh(
+                        [], plate_size_mm, shortfall_mm, plate_thickness_mm, feature_height_mm, mode=mode,
+                    )
+                    plate_mesh, feature_mask = stack_plate_pieces(
+                        plate_mesh, feature_mask, spacer_mesh, spacer_feature_mask, position="below",
+                    )
+
                 base_mesh = build_stand_base_mesh(
                     width_mm=plate_size_mm,
                     base_depth_mm=base_depth_mm,
@@ -137,6 +172,16 @@ if data:
                     plate_thickness_mm=plate_thickness_mm,
                     tilt_deg=tilt_deg,
                     slot_clearance_mm=slot_clearance_mm,
+                    slot_depth_mm=slot_depth_mm,
+                )
+
+                # Both parts positioned together as they'll actually sit
+                # once assembled -- lets the "Assembled preview" tab below
+                # show the real fit and reading direction, instead of
+                # asking for that on faith.
+                assembled_mesh, assembled_feature_mask = assemble_stand_preview(
+                    base_mesh, plate_mesh, feature_mask,
+                    base_depth_mm=base_depth_mm, base_height_mm=base_height_mm, tilt_deg=tilt_deg,
                     slot_depth_mm=slot_depth_mm,
                 )
             except ValueError as e:
@@ -150,6 +195,8 @@ if data:
             "plate_mesh": plate_mesh,
             "feature_mask": feature_mask,
             "base_mesh": base_mesh,
+            "assembled_mesh": assembled_mesh,
+            "assembled_feature_mask": assembled_feature_mask,
             "plate_size_mm": plate_size_mm,
         }
 
@@ -158,11 +205,15 @@ if data:
         plate_w, plate_h = result["plate_mesh"].bounds[1][:2]
         st.success(f"Built a {plate_w:.0f}x{plate_h:.0f}mm QR plate and matching stand base.")
 
-        tab_plate, tab_base = st.tabs(["QR plate", "Stand base"])
+        tab_plate, tab_base, tab_assembled = st.tabs(["QR plate", "Stand base", "Assembled preview"])
         with tab_plate:
             st.plotly_chart(
                 mesh_to_plotly_figure(result["plate_mesh"], result["feature_mask"], base_color, feature_color),
                 use_container_width=True,
+            )
+            st.caption(
+                "Shown flat, as printed -- slides into the base with its bottom (y=0) edge first. "
+                "Check the \"Assembled preview\" tab to see the two parts put together."
             )
             col1, col2 = st.columns(2)
             with col1:
@@ -175,7 +226,9 @@ if data:
             with col2:
                 st.download_button(
                     "Download plate 3MF (colored)",
-                    data=mesh_to_3mf_bytes(result["plate_mesh"], result["feature_mask"], base_color, feature_color),
+                    data=mesh_to_3mf_bytes(
+                        result["plate_mesh"], result["feature_mask"], base_color, feature_color,
+                    ),
                     file_name="qr_plate.3mf",
                     mime="model/3mf",
                     help="Two-color printing gives the most reliable scans -- geometry/shadow alone can be unreliable.",
@@ -191,6 +244,19 @@ if data:
                 data=mesh_to_stl_bytes(result["base_mesh"]),
                 file_name="qr_stand_base.stl",
                 mime="model/stl",
+            )
+
+        with tab_assembled:
+            st.plotly_chart(
+                mesh_to_plotly_figure(
+                    result["assembled_mesh"], result["assembled_feature_mask"], base_color, feature_color,
+                ),
+                use_container_width=True,
+            )
+            st.caption(
+                "Both parts positioned as they'll actually sit once the plate is slid into the base's "
+                "slot -- for checking the fit and reading direction, not for printing (the parts are "
+                "still printed and downloaded separately, flat)."
             )
 
         st.info(
