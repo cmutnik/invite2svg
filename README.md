@@ -66,3 +66,60 @@ via `card3d_utils.py`:
 
 It picks up the SVG generated on the Photo → SVG page automatically (via
 `st.session_state`), or you can upload any other `.svg` file directly.
+
+### QR Code Stand page
+
+The **QR Code Stand** page (`pages/2_🪧_QR_Code_Stand.py`) turns a link (a
+shop, Instagram, etc.) into two 3D-printable parts, via `qr_stand_utils.py`:
+
+1. A flat plate with the QR code embossed (or engraved) on it, built the
+   same "background + raised/engraved artwork" way as the 3D Wedding
+   Invite page, but from its own QR-specific mesh builder rather than
+   `card3d_utils.build_invite_mesh`: a QR code's dense, rectilinear data
+   area can produce a merged polygon with its own interior holes that
+   crashes the `triangle` triangulation library underneath that pipeline
+   (fine for curved letterform artwork, not for a QR grid), so the plate
+   is decomposed row by row into simple, hole-free rectangles instead.
+2. A base block with a slot cut into its top at an angle (cut in 2D with
+   shapely, then extruded, same as the plate/invite geometry), sized to
+   grip the plate's edge so it stands up leaning back on a table.
+
+Print both parts flat on the bed and slide the plate into the base's slot
+to assemble -- handy for pointing craft-fair visitors at a link.
+
+Optionally add branding above/below (or, for an icon alone, in the upper
+right corner of) the QR code:
+
+- **Icon** -- a curated set of brand icons (Instagram, Facebook, TikTok,
+  Etsy, Pinterest, X), sourced from the CC0-licensed
+  [Simple Icons](https://simpleicons.org) project (`icons.py`).
+- **Title / company name** -- rendered with a bundled DejaVu Sans Bold font
+  and traced with potrace (`potrace_utils.py`), the same raster-then-trace
+  approach `streamlit_app.py` uses for photographed cards.
+
+Both are extruded via their own mesh builder in `qr_stand_utils.py`
+(`build_banner_mesh`) rather than `card3d_utils.build_invite_mesh`: some
+icons (e.g. Instagram, whose camera-ring counter itself contains a
+separate, disjoint dot shape) nest two holes deep, which `build_invite_mesh`'s
+"merge touching features into one hole-carrying polygon" step turns into an
+invalid polygon for. A long title is auto-shrunk to fit the plate's width,
+so its artwork can't extend past the plate's own edge.
+
+### QR Code Keychain page
+
+The **QR Code Keychain** page (`pages/3_🔑_QR_Code_Keychain.py`) is the QR
+Code Stand's smaller sibling: the same embossed/engraved QR plate
+(`qr_stand_utils.build_qr_plate_mesh`), but fused directly into a loop with
+a through-hole for a split ring (`build_keychain_loop_mesh`) instead of
+paired with a separate stand base -- one single FDM-ready part, no
+assembly. The loop is a plain extruded polygon (a neck rectangle unioned
+with a circle, a keyring hole subtracted from it) rather than the
+"background + separately-extruded pegs" split the plate/banner use, since
+it's just one uniform-thickness shape with a hole, not two different
+heights sharing a base.
+
+`qr_stand_utils.stack_plate_pieces` (used for the stand page's banner too)
+fuses the plate and the loop into one mesh by translating one directly on
+top of the other along y -- the same "build separate flat slabs, then
+concatenate them edge to edge" approach the rest of this app's 3D pipeline
+uses to avoid a 3D boolean library.
