@@ -6,3 +6,5 @@ shapely
 trimesh
 triangle
 plotly
+qrcode
+Pillow
